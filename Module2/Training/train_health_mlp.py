@@ -1,10 +1,29 @@
+"""
+Module 2 — Training Pipeline
+=============================
+Trains the Module 1 HealthMLP using backpropagation and the Adam
+optimizer. Dropout and batch normalization (already built into the
+model) improve generalization.
+
+Run from the repo root:
+    python Module2/Training/train_health_mlp.py --epochs 50
+
+No CSV needed to try it — a synthetic dataset matching the real feature
+schema is auto-generated so the pipeline runs end-to-end immediately.
+Point --csv at a real dataset once you have one (see load_data()).
+"""
 import argparse
 import os
+import sys
 
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
+
+# Make Module1 importable when running this script directly
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "..", "Module1", "Model"))
+from health_mlp import HealthMLP, HEALTH_CLASSES  # noqa: E402
 
 try:
     import pandas as pd
@@ -13,67 +32,6 @@ try:
 except ImportError:
     HAS_PANDAS_SKLEARN = False
 
-
-# ---------------------------------------------------------------------------
-# MODULE 1 — MLP MODEL ARCHITECTURE
-# ---------------------------------------------------------------------------
-HEALTH_CLASSES = ["Healthy", "Warning", "Critical"]
-
-
-class HealthMLP(nn.Module):
-    """
-    Classifies panel condition as Healthy / Warning / Critical.
-
-    Input = concatenation of:
-      - cnn_feature_dim (default 128) image features extracted upstream
-      - numeric_feature_dim (default 7): voltage, current, power,
-        temperature, efficiency, defect_confidence, historical_health_avg
-
-    Output = 3-way softmax over HEALTH_CLASSES.
-    """
-
-    def __init__(self, cnn_feature_dim: int = 128, numeric_feature_dim: int = 7, num_classes: int = 3):
-        super().__init__()
-        input_dim = cnn_feature_dim + numeric_feature_dim
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, 256),
-            nn.BatchNorm1d(256),
-            nn.ReLU(),
-            nn.Dropout(0.4),
-
-            nn.Linear(256, 64),
-            nn.BatchNorm1d(64),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-
-            nn.Linear(64, num_classes),
-        )
-
-    def forward(self, x):
-        return self.net(x)
-
-    @torch.no_grad()
-    def predict(self, cnn_features: torch.Tensor, numeric_features: torch.Tensor):
-        """
-        cnn_features: (feature_dim,) tensor
-        numeric_features: (numeric_feature_dim,) tensor
-        Returns (status_label, health_score_0_100, prob_dict)
-        """
-        self.eval()
-        x = torch.cat([cnn_features, numeric_features], dim=0).unsqueeze(0)
-        logits = self.forward(x)
-        probs = torch.softmax(logits, dim=1)[0]
-        idx = int(torch.argmax(probs).item())
-        prob_dict = {cls: float(probs[i]) for i, cls in enumerate(HEALTH_CLASSES)}
-        # Health score: weighted combination that rewards "Healthy" probability
-        health_score = float(probs[0] * 100 + probs[1] * 55 + probs[2] * 15)
-        return HEALTH_CLASSES[idx], round(health_score, 1), prob_dict
-
-
-# ---------------------------------------------------------------------------
-# MODULE 2 — TRAINING PIPELINE (backprop + Adam, dropout/batchnorm already
-# baked into the architecture above)
-# ---------------------------------------------------------------------------
 
 def load_data(csv_path: str, cnn_feature_dim: int = 128):
     """
@@ -95,12 +53,8 @@ def load_data(csv_path: str, cnn_feature_dim: int = 128):
 
 
 def make_synthetic_data(n_samples: int = 2000, cnn_feature_dim: int = 128, seed: int = 42):
-    """
-    Generates a synthetic dataset with the same shape/semantics as the real
-    feature schema, so the training pipeline can be demonstrated end-to-end
-    without a real dataset. Each class gets a distinct feature distribution
-    so the model has a learnable signal.
-    """
+    """Synthetic dataset with the same shape/semantics as the real schema,
+    so the pipeline can be demoed end-to-end without a real dataset."""
     rng = np.random.default_rng(seed)
     n_numeric = 7
     X = np.zeros((n_samples, cnn_feature_dim + n_numeric), dtype=np.float32)
@@ -140,19 +94,18 @@ def make_synthetic_data(n_samples: int = 2000, cnn_feature_dim: int = 128, seed:
 
 def train(csv_path: str, epochs: int, lr: float, out_path: str, batch_size: int = 64):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"[health_mlp] device = {device}")
+    print(f"[train_health_mlp] device = {device}")
 
     if csv_path and os.path.exists(csv_path):
-        print(f"[health_mlp] loading real dataset from {csv_path}")
+        print(f"[train_health_mlp] loading real dataset from {csv_path}")
         X, y = load_data(csv_path)
     else:
-        print("[health_mlp] no CSV found — generating synthetic demo dataset")
+        print("[train_health_mlp] no CSV found — generating synthetic demo dataset")
         X, y = make_synthetic_data()
 
     if HAS_PANDAS_SKLEARN:
         X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
     else:
-        # simple manual split if sklearn isn't available
         n_val = int(0.2 * len(X))
         idx = np.random.permutation(len(X))
         val_idx, train_idx = idx[:n_val], idx[n_val:]
@@ -165,15 +118,13 @@ def train(csv_path: str, epochs: int, lr: float, out_path: str, batch_size: int 
 
     model = HealthMLP().to(device)
 
-    # --- Module 2 requirements ---
-    criterion = nn.CrossEntropyLoss()                       # loss used for backprop
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)  # Adam optimizer
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
 
     best_val_loss = float("inf")
     patience, epochs_no_improve = 7, 0
 
     for epoch in range(1, epochs + 1):
-        # ---- train step (backpropagation happens via loss.backward()) ----
         model.train()
         running_loss = 0.0
         for xb, yb in train_loader:
@@ -181,12 +132,11 @@ def train(csv_path: str, epochs: int, lr: float, out_path: str, batch_size: int 
             optimizer.zero_grad()
             logits = model(xb)
             loss = criterion(logits, yb)
-            loss.backward()          # backprop
-            optimizer.step()         # Adam update
+            loss.backward()
+            optimizer.step()
             running_loss += loss.item() * xb.size(0)
         train_loss = running_loss / len(train_loader.dataset)
 
-        # ---- validation step ----
         model.eval()
         val_loss, correct = 0.0, 0
         with torch.no_grad():
@@ -217,11 +167,10 @@ def train(csv_path: str, epochs: int, lr: float, out_path: str, batch_size: int 
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train the SolSight Health MLP (Modules 1 & 2)")
-    parser.add_argument("--csv", default="", help="Path to a real features CSV (optional). "
-                                                    "If omitted or not found, synthetic data is used.")
+    parser = argparse.ArgumentParser(description="Train the SolSight Health MLP (Module 2)")
+    parser.add_argument("--csv", default="", help="Path to a real features CSV (optional).")
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--out", default="mlp_best.pt")
+    parser.add_argument("--out", default="../../saved_models/mlp_best.pt")
     args = parser.parse_args()
     train(args.csv, args.epochs, args.lr, args.out)
