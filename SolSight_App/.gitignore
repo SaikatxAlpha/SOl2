@@ -1,0 +1,18 @@
+# dependencies / builds
+node_modules/
+dist/
+
+# python
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# secrets
+.env
+backend/.env
+
+# local tooling
+.claude/worktrees/
+.DS_Store

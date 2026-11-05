@@ -171,6 +171,6 @@ if __name__ == "__main__":
     parser.add_argument("--csv", default="", help="Path to a real features CSV (optional).")
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--out", default="../../saved_models/mlp_best.pt")
+    parser.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "..", "..", "saved_models", "mlp_best.pt"))
     args = parser.parse_args()
     train(args.csv, args.epochs, args.lr, args.out)

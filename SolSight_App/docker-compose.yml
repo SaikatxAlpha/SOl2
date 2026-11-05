@@ -1,0 +1,23 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    ports:
+      - "27017:27017"
+
+  api:
+    build: ./backend
+    depends_on:
+      - mongo
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      MONGO_DB: solsight
+      JWT_SECRET: ${JWT_SECRET:-change-me-before-deploying}
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+    ports:
+      - "8000:8000"
+
+volumes:
+  mongo-data:
